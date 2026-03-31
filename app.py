@@ -70,8 +70,16 @@ if st.button("Add task"):
         st.success(f"Added: {task_title}")
 
 if st.session_state.tasks:
-    st.write("Current tasks:")
-    st.table(st.session_state.tasks)
+    st.caption(f"{len(st.session_state.tasks)} task(s) added for {st.session_state.pet.name}:")
+    st.table([
+        {
+            "Title": t["title"],
+            "Duration (min)": t["duration_minutes"],
+            "Priority": t["priority"],
+            "Category": t["category"],
+        }
+        for t in st.session_state.tasks
+    ])
 else:
     st.info("No tasks yet. Add one above.")
 
@@ -92,15 +100,50 @@ if st.button("Generate schedule"):
 
         st.success(plan.summary())
 
+        # Conflict warnings — surfaced directly from scheduler.conflicts
+        if scheduler.conflicts:
+            st.markdown("### ⚠️ Scheduling Conflicts")
+            st.caption(
+                "Two or more tasks are set to the same time. "
+                "Both are still scheduled — go back and adjust a task's preferred time to avoid overlap."
+            )
+            for warning in scheduler.conflicts:
+                st.warning(warning)
+
+        # Scheduled tasks — already sorted chronologically by scheduler.sort_by_time()
         st.markdown("### Scheduled Tasks")
-        if plan.entries:
-            st.table([t.to_dict() for t in plan.entries])
+        if scheduler.scheduled_tasks:
+            st.caption("Sorted by preferred time (earliest first; unscheduled times appear last).")
+            st.table([
+                {
+                    "Title": t.title,
+                    "Time": t.preferred_time or "—",
+                    "Duration (min)": t.duration_minutes,
+                    "Priority": t.priority,
+                    "Category": t.category,
+                    "Recurring": t.frequency or "—",
+                }
+                for t in scheduler.scheduled_tasks
+            ])
         else:
             st.info("No tasks could fit in the available time.")
 
-        if plan.skipped:
+        if scheduler.skipped_tasks:
             st.markdown("### Skipped Tasks")
-            st.table([t.to_dict() for t in plan.skipped])
+            skipped_minutes = sum(t.duration_minutes for t in scheduler.skipped_tasks)
+            st.caption(
+                f"{len(scheduler.skipped_tasks)} task(s) skipped — "
+                f"would need {skipped_minutes} more minute(s). "
+                "Increase the time budget above and regenerate to fit them in."
+            )
+            st.table([
+                {
+                    "Title": t.title,
+                    "Duration (min)": t.duration_minutes,
+                    "Priority": t.priority,
+                }
+                for t in scheduler.skipped_tasks
+            ])
 
         st.markdown("### Reasoning")
         st.write(plan.reasoning)

@@ -71,13 +71,35 @@ Two additional design decisions made during review:
 
 **a. How you used AI**
 
-- How did you use AI tools during this project (for example: design brainstorming, debugging, refactoring)?
-- What kinds of prompts or questions were most helpful?
+AI tools were used across every phase of the project, but in different ways depending on the task.
 
-**b. Judgment and verification**
+During the design phase, AI was used for brainstorming — specifically to pressure-test the initial UML. I described the five classes and their relationships and asked what was missing. This surfaced the need for `is_scheduled` and `completed` as separate flags on `CareTask`, and the importance of validating that a pet belongs to the owner before the `Scheduler` is constructed.
 
-- Describe one moment where you did not accept an AI suggestion as-is.
-- How did you evaluate or verify what the AI suggested?
+During implementation, the most useful prompts were narrow and specific: "What should `mark_complete()` return when frequency is None?" and "How should `sort_by_time()` handle a task with no preferred_time without crashing?" These produced focused answers that slotted directly into the existing class structure rather than suggesting rewrites.
+
+During testing, AI helped identify edge cases that were easy to overlook — particularly the `is_scheduled` reset bug (stale flags surviving a second call to `generate_plan()`) and the case where `get_plan()` is called before `generate_plan()`. Both became explicit tests.
+
+During the UI phase, AI helped translate scheduler outputs into Streamlit components — specifically deciding which component (`st.warning`, `st.caption`, `st.table`) fit each type of information.
+
+**b. Judgment and verification — AI strategy with VS Code Copilot**
+
+*Which Copilot features were most effective?*
+
+Inline completions were most useful for boilerplate — filling in `to_dict()` key lists, writing `__init__` parameter assignments, and generating the `pytest` fixture helpers (`make_owner`, `make_pet`, `make_task`). These are mechanical and low-risk, so accepting completions directly saved time without introducing design risk.
+
+The chat panel was more valuable for reasoning through design questions, especially when a suggestion needed to be evaluated against the existing class structure before accepting it.
+
+*One AI suggestion that was rejected or modified:*
+
+When implementing `detect_conflicts()`, Copilot suggested detecting conflicts inside `generate_plan()` by comparing every pair of tasks using a nested loop — O(n²) — and flagging any pair whose preferred times were within 30 minutes of each other as a potential conflict. This was rejected for two reasons. First, the 30-minute overlap window was an assumption the system had no basis to make — preferred time is a hint, not a strict slot, so two tasks at `08:00` and `08:20` might be perfectly fine. Second, adding overlap logic would have required `detect_conflicts()` to know about task durations, giving it two responsibilities instead of one. The final implementation uses exact-match detection only (`task.preferred_time in seen`), which is simpler, testable in isolation, and honest about what the system actually enforces.
+
+*How did using separate chat sessions for different phases help?*
+
+Keeping design, implementation, testing, and UI work in separate sessions prevented context bleed. When writing tests, the session only contained the finalized class contracts — there was no earlier brainstorming suggesting alternative method signatures that might have confused the suggestions. Each session started with a clear scope, which made AI suggestions more predictable and easier to evaluate. It also made it easier to reject a suggestion: if a suggestion didn't fit the scope of the current session's phase, that was a clear signal to move on.
+
+*What it means to be the "lead architect" when using powerful AI tools:*
+
+The most important lesson was that AI is very good at filling in the inside of a box but cannot define the box itself. Every useful AI contribution in this project happened after a design decision was already made: what the class is called, what it is responsible for, what its method signatures are. When AI was asked open-ended questions ("how should I design the scheduler?"), the suggestions were generic and required significant filtering. When it was asked narrow questions ("given this method signature, what should the body do?"), the suggestions were directly usable. Being the lead architect meant making all the structural decisions first and using AI only to execute them — not to make them.
 
 ---
 
@@ -85,13 +107,25 @@ Two additional design decisions made during review:
 
 **a. What you tested**
 
-- What behaviors did you test?
-- Why were these tests important?
+The test suite covers six behavioral areas:
+
+1. **Sorting correctness** — tasks with `preferred_time` are returned in chronological order; tasks with no preferred time sort to the end. This matters because the daily plan is only useful if it reflects the actual order of the day.
+
+2. **Recurrence logic** — completing a `frequency="daily"` task appends a fresh incomplete copy to `pet.tasks`. This was tested at both the `CareTask` level (`mark_complete()` returns the right object) and the `Pet` level (`complete_task()` correctly appends it), because both layers can fail independently.
+
+3. **Conflict detection** — tasks sharing a `preferred_time` produce a `WARNING:` message in `scheduler.conflicts`; tasks with no preferred time produce no false positives. Testing the negative case (no false positives) was just as important as the positive case.
+
+4. **Priority scheduling with tiebreaking** — high-priority tasks are always selected before low-priority ones; when priorities tie, the shorter task is scheduled first to maximize coverage.
+
+5. **Time budget enforcement** — tasks that exceed remaining time are moved to `skipped_tasks`; re-running `generate_plan()` resets all state cleanly. The reset test caught a real bug during development where `is_scheduled` flags were not being cleared before a second run.
+
+6. **Owner task filtering** — `filter_tasks()` correctly filters by completion status, pet name (case-insensitive), or both combined.
 
 **b. Confidence**
 
-- How confident are you that your scheduler works correctly?
-- What edge cases would you test next if you had more time?
+Confidence level: **4 out of 5**.
+
+The scheduler's core behaviors are each covered by multiple focused tests, including edge cases like zero available time, all-identical priorities, and tasks with no preferred time. The main gap is conflict detection: the current implementation only flags exact-time matches (`"08:00" == "08:00"`). It does not detect overlapping windows — a 30-minute task starting at `08:00` and a task starting at `08:15` would both be scheduled without any warning. If the project continued, that would be the first test to add, followed by tests for recurring tasks across a DST boundary and month-end recurrence edge cases.
 
 ---
 
@@ -99,12 +133,14 @@ Two additional design decisions made during review:
 
 **a. What went well**
 
-- What part of this project are you most satisfied with?
+The separation of scheduling logic from display logic was the strongest design decision in the project. Because `Scheduler` stores its results in `scheduled_tasks`, `skipped_tasks`, and `conflicts` rather than printing them directly, the Streamlit UI could read each list independently and render it with the right component (`st.warning` for conflicts, `st.table` for tasks, `st.caption` for actionable hints). If the logic had been coupled to print statements or string output from the start, adding the UI would have required rewriting core methods rather than just reading their outputs. The same separation made testing straightforward — tests assert on list contents and object state, not on printed strings.
 
-**b. What you would improve**
+**b. What I would improve**
 
-- If you had another iteration, what would you improve or redesign?
+The conflict detection logic is the clearest candidate for improvement. The current exact-match approach is simple and testable but does not reflect real scheduling conflicts — two tasks at `"08:00"` and `"08:25"` can genuinely overlap if the first task takes 30 minutes. A reworked `detect_conflicts()` would compare task start times plus durations to find actual overlaps, not just identical time strings. This would require `preferred_time` to be parsed and stored as a `datetime.time` object rather than a raw string, which is a small change that would also make `sort_by_time()` simpler.
+
+I would also add a `preferred_time` input field to the Streamlit task form. Currently the UI has no way to set preferred times — they can only be set in code — which means the conflict detection and chronological sorting features are invisible to a user running the app normally.
 
 **c. Key takeaway**
 
-- What is one important thing you learned about designing systems or working with AI on this project?
+The most important thing I learned is that AI tools amplify whatever decisions you have already made — good or bad. When the class responsibilities were clearly defined and the method signatures were settled, AI suggestions fit cleanly into the existing design and were easy to evaluate. When design questions were still open, AI suggestions added noise rather than clarity. The skill that mattered most in this project was not knowing how to prompt AI effectively — it was knowing when the design was solid enough to hand a piece of it to AI, and when it wasn't. That judgment belongs to the architect, not the tool.

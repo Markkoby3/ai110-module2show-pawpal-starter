@@ -44,6 +44,71 @@ Tasks can be marked `frequency="daily"` or `frequency="weekly"`. When `pet.compl
 **Task filtering**
 `owner.filter_tasks()` lets you query tasks across all pets by completion status, pet name, or both — for example, all incomplete tasks for a specific pet.
 
+## Demo
+
+### Running the app
+
+```bash
+streamlit run app.py
+```
+
+The app opens at `http://localhost:8501` in your browser.
+
+### Walkthrough
+
+**Step 1 — Enter owner & pet info**
+Fill in the owner name, available time (minutes), pet name, and species, then click **Save owner & pet**. A confirmation banner confirms the session is ready.
+
+**Step 2 — Add tasks**
+For each care task, set a title, duration, priority, and category, then click **Add task**. The task table updates immediately. Add as many tasks as needed — try mixing priorities and setting different `preferred_time` values to see sorting and conflict detection in action.
+
+**Step 3 — Generate the schedule**
+Click **Generate schedule**. The app will:
+- Display a summary (`X tasks scheduled, Y min total`)
+- Show a conflict warning if any two tasks share the same preferred time
+- Render the scheduled tasks sorted chronologically by preferred time
+- List any skipped tasks with the extra minutes needed to fit them in
+- Print the plain-language reasoning for every scheduling decision
+
+### Example scenario
+
+| Task | Duration | Priority | Preferred time |
+|---|---|---|---|
+| Morning meds | 5 min | high | 08:00 |
+| Breakfast | 10 min | high | 08:00 |
+| Afternoon walk | 20 min | medium | 13:30 |
+| Evening grooming | 15 min | low | 18:00 |
+
+With **45 minutes** available, the scheduler fits all four tasks, flags the `08:00` conflict between Meds and Breakfast, and displays them in chronological order.
+
+With **30 minutes** available, Evening grooming is skipped (lowest priority, not enough time remaining) and the app tells you exactly how many extra minutes are needed.
+
+### Screenshot
+
+![PawPal App](Screenshot%202026-03-31%20001415.png)
+## Features
+
+### Greedy Priority Scheduling
+Tasks are selected using a greedy algorithm that processes them in priority order — `high` before `medium` before `low`. Each task is added to the plan only if its duration fits within the owner's remaining time budget. Once the budget runs out, all remaining tasks are moved to a skipped list. This ensures the most important care never gets dropped because a lower-priority task consumed the available time first.
+
+### Duration Tiebreaking
+When two tasks share the same priority, the shorter one is scheduled first. This is implemented as a secondary sort key (`duration_minutes` ascending) inside `get_tasks_by_priority()`, maximizing the number of tasks that fit into the day without any manual configuration.
+
+### Chronological Sorting by Preferred Time
+After tasks are selected, the daily plan is reordered by `preferred_time` using `datetime.strptime` to parse `"HH:MM"` strings into comparable `time` objects. Tasks with no preferred time fall back to `"23:59"` so they always appear at the end. This gives the owner a schedule that flows naturally from morning to evening.
+
+### Conflict Detection
+Before finalizing the plan, `detect_conflicts()` scans all scheduled tasks for duplicate `preferred_time` values. Any collision produces a `WARNING:` message stored in `scheduler.conflicts` and surfaced in the UI. The scheduler does not crash or drop either task — it flags the issue and lets the owner decide what to adjust.
+
+### Daily and Weekly Recurrence
+Tasks can carry a `frequency` of `"daily"` or `"weekly"`. When `complete_task()` is called, `mark_complete()` sets the original task's `completed` flag to `True` and returns a brand-new `CareTask` clone with `completed=False` and the same title, duration, priority, and frequency. The clone is immediately appended to the pet's task list, so the next occurrence is always ready without any manual re-entry.
+
+### Cross-Pet Task Filtering
+`owner.filter_tasks()` traverses all pets and returns a flat list of tasks that match any combination of completion status and pet name. The pet name match is case-insensitive. This allows the owner to query things like "all incomplete tasks for Mochi" in a single call without looping through pets manually.
+
+### Scheduling Explanations
+After `generate_plan()` runs, `explain()` produces a plain-language summary of every decision: why each task was scheduled (priority level, duration) and why each was skipped (insufficient time). This reasoning is stored in `DailyPlan.reasoning` and displayed in the UI so the owner always knows why the plan looks the way it does.
+
 ## Getting started
 
 ### Setup
