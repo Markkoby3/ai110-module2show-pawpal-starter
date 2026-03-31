@@ -22,6 +22,28 @@ Your final app should:
 - Display the plan clearly (and ideally explain the reasoning)
 - Include tests for the most important scheduling behaviors
 
+## Smarter Scheduling
+
+The scheduler goes beyond a simple task list with the following features:
+
+**Priority-first selection with duration tiebreaking**
+Tasks are selected greedily in priority order (high → medium → low). When two tasks share the same priority, the shorter one is scheduled first to fit more tasks into the available time budget.
+
+**Time-slot ordering (`preferred_time`)**
+Each task can be assigned a preferred time in `HH:MM` format. After selection, the final plan is sorted chronologically using `datetime.strptime` so the daily schedule flows naturally from morning to evening. Tasks with no preferred time are placed at the end.
+
+**Shared time budget across pets**
+The owner's `available_minutes` is a single daily pool shared across all pets. Time used scheduling one pet is deducted before the next pet is scheduled.
+
+**Conflict detection**
+If two tasks for the same pet are scheduled at the same `preferred_time`, the scheduler prints a warning message without crashing. Conflicts are stored in `scheduler.conflicts` and displayed in the output.
+
+**Recurring tasks**
+Tasks can be marked `frequency="daily"` or `frequency="weekly"`. When `pet.complete_task()` is called on a recurring task, a fresh next occurrence is automatically added to the pet's task list.
+
+**Task filtering**
+`owner.filter_tasks()` lets you query tasks across all pets by completion status, pet name, or both — for example, all incomplete tasks for a specific pet.
+
 ## Getting started
 
 ### Setup

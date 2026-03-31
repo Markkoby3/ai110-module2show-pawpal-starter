@@ -54,16 +54,16 @@ Time was chosen as the primary hard constraint because it is a fixed real-world 
 
 **b. Tradeoffs**
 
-The scheduler uses a greedy algorithm: it processes tasks in priority + duration order and accepts each one if it fits in the remaining time, skipping it otherwise. This is fast and simple but it is not globally optimal. For example, two short medium-priority tasks might together use less time and deliver more value than one long high-priority task, but the greedy approach will always schedule the high-priority task first.
+The most significant tradeoff is that the scheduler separates *which tasks get scheduled* from *when they appear in the day*. Priority and duration determine whether a task makes the plan at all; `preferred_time` only controls the display order after selection is already done. This means a low-priority task set to `"07:00"` could end up at the top of the printed schedule even though it was nearly cut — while a high-priority task with no preferred time is shown at the bottom.
 
-This tradeoff is reasonable for a pet care context because priority reflects genuine importance — a dog's medication should not be skipped in favor of fitting in more enrichment activities. The greedy approach also produces predictable, easy-to-explain output, which matters for the reasoning display. A true knapsack optimization would be harder to explain to a non-technical user.
+This tradeoff was a deliberate design choice. Combining selection and time-slot ordering into one pass would require comparing tasks across two dimensions simultaneously, making the algorithm harder to explain and test. Keeping them as two separate steps — greedy selection by priority, then `sort_by_time()` on the result — means each step has a single clear responsibility. The reasoning output stays readable because it only explains why a task was included or skipped, not why it appears at a particular time.
+
+The cost is that `preferred_time` does not influence scheduling decisions at all. A task marked `"07:00"` has no advantage over one marked `"18:00"` when it comes to fitting inside the time budget. For a pet care app this is acceptable — the owner sets priority to reflect importance, and preferred time is just a convenience hint for planning the day. If time-of-day constraints ever became strict requirements (e.g. medication must be given before 9am), the selection step would need to be reworked to factor in time slots, which is a known future limitation.
 
 Two additional design decisions made during review:
 
 - `get_plan()` and `explain()` now raise a `RuntimeError` if called before `generate_plan()`. Previously they silently returned empty results, which would have been a hard-to-debug failure.
 - The `Scheduler` now validates that the pet passed in actually belongs to the owner via a check against `owner.pets`. This enforces the intended object relationship and prevents scheduling a pet under the wrong owner's time budget.
-
-`preferred_time` on `CareTask` is stored but not yet used by the scheduler. It is reserved for a future enhancement where tasks would be assigned to morning, afternoon, or evening slots rather than just an ordered list.
 
 ---
 

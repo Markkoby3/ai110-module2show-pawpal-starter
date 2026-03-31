@@ -36,6 +36,47 @@ class TestOwner:
         make_pet(owner, name="Luna")
         assert len(owner.pets) == 2
 
+    def test_filter_tasks_by_completion(self):
+        owner = make_owner()
+        pet = make_pet(owner)
+        done = make_task(title="Done task")
+        pending = make_task(title="Pending task")
+        done.mark_complete()
+        pet.add_task(done)
+        pet.add_task(pending)
+        assert owner.filter_tasks(completed=True)  == [done]
+        assert owner.filter_tasks(completed=False) == [pending]
+        assert len(owner.filter_tasks()) == 2
+
+    def test_filter_tasks_by_pet_name(self):
+        owner = make_owner()
+        mochi = make_pet(owner, name="Mochi")
+        luna  = make_pet(owner, name="Luna")
+        mochi.add_task(make_task(title="Walk"))
+        luna.add_task(make_task(title="Brush"))
+        assert [t.title for t in owner.filter_tasks(pet_name="Mochi")] == ["Walk"]
+        assert [t.title for t in owner.filter_tasks(pet_name="Luna")]  == ["Brush"]
+
+    def test_filter_tasks_by_pet_name_case_insensitive(self):
+        owner = make_owner()
+        pet = make_pet(owner, name="Mochi")
+        pet.add_task(make_task(title="Walk"))
+        assert len(owner.filter_tasks(pet_name="mochi")) == 1
+        assert len(owner.filter_tasks(pet_name="MOCHI")) == 1
+
+    def test_filter_tasks_combined(self):
+        owner = make_owner()
+        mochi = make_pet(owner, name="Mochi")
+        luna  = make_pet(owner, name="Luna")
+        done = make_task(title="Done walk")
+        done.mark_complete()
+        mochi.add_task(done)
+        mochi.add_task(make_task(title="Pending walk"))
+        luna.add_task(make_task(title="Luna task"))
+        result = owner.filter_tasks(completed=True, pet_name="Mochi")
+        assert len(result) == 1
+        assert result[0].title == "Done walk"
+
 
 # --- Pet ---
 
@@ -63,6 +104,23 @@ class TestPet:
         pet.add_task(task)
         pet.remove_task("Walk")
         assert task not in pet.tasks
+
+    def test_complete_task_adds_next_occurrence(self):
+        owner = make_owner()
+        pet = make_pet(owner)
+        pet.add_task(CareTask(title="Feed", duration_minutes=10, priority="high", category="feeding", frequency="daily"))
+        assert len(pet.tasks) == 1
+        pet.complete_task("Feed")
+        assert len(pet.tasks) == 2
+        assert pet.tasks[0].completed is True
+        assert pet.tasks[1].completed is False
+
+    def test_complete_task_no_recurrence_does_not_add(self):
+        owner = make_owner()
+        pet = make_pet(owner)
+        pet.add_task(make_task(title="One-off"))
+        pet.complete_task("One-off")
+        assert len(pet.tasks) == 1
 
     def test_remove_nonexistent_task_does_not_raise(self):
         owner = make_owner()
@@ -102,7 +160,7 @@ class TestCareTask:
     def test_to_dict_keys(self):
         task = make_task()
         d = task.to_dict()
-        assert set(d.keys()) == {"title", "duration_minutes", "priority", "category", "preferred_time", "is_scheduled"}
+        assert set(d.keys()) == {"title", "duration_minutes", "priority", "category", "preferred_time", "frequency", "is_scheduled", "completed"}
 
     def test_default_is_scheduled_false(self):
         task = make_task()
@@ -116,6 +174,30 @@ class TestCareTask:
         task = make_task()
         task.mark_complete()
         assert task.completed is True
+
+    def test_mark_complete_no_recurrence_returns_none(self):
+        task = make_task()
+        assert task.mark_complete() is None
+
+    def test_mark_complete_daily_returns_new_task(self):
+        task = CareTask(title="Feed", duration_minutes=10, priority="high", category="feeding", frequency="daily")
+        next_task = task.mark_complete()
+        assert next_task is not None
+        assert next_task is not task
+        assert next_task.completed is False
+        assert next_task.frequency == "daily"
+        assert next_task.title == "Feed"
+
+    def test_mark_complete_weekly_returns_new_task(self):
+        task = CareTask(title="Grooming", duration_minutes=20, priority="low", category="grooming", frequency="weekly")
+        next_task = task.mark_complete()
+        assert next_task is not None
+        assert next_task.frequency == "weekly"
+        assert next_task.completed is False
+
+    def test_invalid_frequency_raises(self):
+        with pytest.raises(ValueError):
+            CareTask(title="Walk", duration_minutes=10, priority="high", category="walk", frequency="monthly")
 
 
 # --- Scheduler ---
@@ -200,6 +282,47 @@ class TestScheduler:
         scheduler.generate_plan()
         plan = scheduler.get_plan()
         assert isinstance(plan, DailyPlan)
+
+    def test_no_conflicts_when_times_are_unique(self):
+        owner = make_owner(minutes=120)
+        pet = make_pet(owner)
+        pet.add_task(CareTask(title="Walk",      duration_minutes=20, priority="high",   category="walk",    preferred_time="07:00"))
+        pet.add_task(CareTask(title="Breakfast",  duration_minutes=10, priority="high",   category="feeding", preferred_time="08:00"))
+        scheduler = Scheduler(owner=owner, pet=pet)
+        scheduler.generate_plan()
+        assert scheduler.conflicts == []
+
+    def test_conflict_detected_for_same_time(self):
+        owner = make_owner(minutes=120)
+        pet = make_pet(owner)
+        pet.add_task(CareTask(title="Meds",      duration_minutes=5,  priority="high",   category="meds",    preferred_time="08:00"))
+        pet.add_task(CareTask(title="Breakfast",  duration_minutes=10, priority="high",   category="feeding", preferred_time="08:00"))
+        scheduler = Scheduler(owner=owner, pet=pet)
+        scheduler.generate_plan()
+        assert len(scheduler.conflicts) == 1
+        assert "08:00" in scheduler.conflicts[0]
+        assert "WARNING" in scheduler.conflicts[0]
+
+    def test_no_conflict_for_tasks_with_no_time(self):
+        owner = make_owner(minutes=120)
+        pet = make_pet(owner)
+        pet.add_task(make_task(title="Task A", duration=10))
+        pet.add_task(make_task(title="Task B", duration=10))
+        scheduler = Scheduler(owner=owner, pet=pet)
+        scheduler.generate_plan()
+        assert scheduler.conflicts == []
+
+    def test_sort_by_time_orders_slots(self):
+        owner = make_owner(minutes=120)
+        pet = make_pet(owner)
+        pet.add_task(CareTask(title="Evening walk",  duration_minutes=20, priority="medium", category="walk",        preferred_time="18:00"))
+        pet.add_task(CareTask(title="Morning meds",  duration_minutes=5,  priority="high",   category="meds",        preferred_time="08:00"))
+        pet.add_task(CareTask(title="Afternoon play", duration_minutes=15, priority="medium", category="enrichment",  preferred_time="13:30"))
+        pet.add_task(CareTask(title="Unset task",    duration_minutes=10, priority="low",    category="other"))
+        scheduler = Scheduler(owner=owner, pet=pet)
+        scheduler.generate_plan()
+        times = [t.preferred_time for t in scheduler.scheduled_tasks]
+        assert times == ["08:00", "13:30", "18:00", None]
 
     def test_zero_available_time_skips_all(self):
         owner = make_owner(minutes=0)
