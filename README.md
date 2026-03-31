@@ -63,3 +63,28 @@ pip install -r requirements.txt
 5. Add tests to verify key behaviors.
 6. Connect your logic to the Streamlit UI in `app.py`.
 7. Refine UML so it matches what you actually built.
+
+## Testing PawPal+
+
+### Run the tests
+
+```bash
+python -m pytest
+```
+
+### What the tests cover
+
+| Area | What is verified |
+|---|---|
+| **Sorting correctness** | Tasks with `preferred_time` are returned in chronological order (e.g., `08:00` → `13:30` → `18:00`). Tasks with no preferred time sort to the end. |
+| **Recurrence logic** | Marking a `frequency="daily"` task complete automatically appends a fresh, incomplete next occurrence to the pet's task list. The original task is marked `completed=True` and the new one starts as `completed=False` with the same title and frequency. |
+| **Conflict detection** | The scheduler flags duplicate `preferred_time` slots with a `WARNING:` message stored in `scheduler.conflicts`. Tasks with no preferred time do not produce false positives. |
+| **Priority scheduling** | High-priority tasks are selected before lower-priority ones. When priorities tie, the shorter task is preferred to maximize the number of tasks that fit within the time budget. |
+| **Time budget enforcement** | Tasks that exceed the remaining available minutes are moved to `skipped_tasks`. Re-running `generate_plan()` after changing available time resets all state correctly. |
+| **Owner task filtering** | `filter_tasks()` correctly filters by completion status, pet name (case-insensitive), or both combined. |
+
+### Confidence Level
+
+**4 / 5 stars**
+
+The core scheduling behaviors — priority selection, time-slot sorting, conflict detection, and recurring task generation — are each covered by multiple focused tests, including edge cases like ties, zero available time, and tasks with no preferred time. One star is withheld because conflict detection only catches exact-time matches (`"08:00" == "08:00"`) and does not detect overlapping time windows (e.g., a 30-min task at `08:00` overlapping a task at `08:15"`), leaving a real-world scheduling gap untested.
